@@ -1,11 +1,11 @@
 from sentence_transformers import SentenceTransformer
 
-_model = None
+model = None
 
 def get_model():
-    global _model
-    if _model is None:
+    global model
+    if model is None:
         print("Loading embedding model...")
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
+        model = SentenceTransformer("all-MiniLM-L6-v2", device="cuda" if SentenceTransformer()._get_device() == "cuda" else "cpu")
         print("Embedding model loaded successfully.")
-    return _model
+    return model

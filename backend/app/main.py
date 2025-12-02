@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 from app.core.config import create_app
-from app.core.settings import get_settings
+from app.core.settings import settings
 from app.utils.model_loder import get_model
 
 # Routers
@@ -9,7 +9,6 @@ from app.api.chat import router as chat_router
 from app.api.health import router as health_router
 from app.api.embedding import router as embedding_router
 
-settings = get_settings()
 
 # Create the FastAPI app only once
 app: FastAPI = create_app()
