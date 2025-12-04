@@ -1,9 +1,9 @@
-from app.core.settings import get_settings
+from app.core.settings import settings
 
 
 def check_health() :
     return {
         "status": "ok",
-        "app": get_settings().APP_NAME,
-        "version": get_settings().APP_VERSION,
+        "app": settings.APP_NAME,
+        "version": settings.APP_VERSION,
     }

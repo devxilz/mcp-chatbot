@@ -1,11 +1,11 @@
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
-from app.core.settings import get_settings
+from app.core.settings import settings
 
 # ============================================================
 # Load global application settings (name, version, debug, etc.)
 # ============================================================
-settings = get_settings()
+
 
 
 # ============================================================

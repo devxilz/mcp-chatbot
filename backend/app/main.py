@@ -5,7 +5,7 @@ from app.core.settings import settings
 from app.utils.model_loder import get_model
 
 # Routers
-from app.api.chat import router as chat_router
+from app.api.chat_routes import router as chat_router
 from app.api.health import router as health_router
 from app.api.embedding import router as embedding_router
 

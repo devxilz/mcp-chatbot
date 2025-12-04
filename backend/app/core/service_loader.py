@@ -1,5 +1,5 @@
 import chromadb
-from utils.model_loder import model 
+from app.utils.model_loder import get_model
 from functools import lru_cache
 
 @lru_cache
@@ -19,4 +19,4 @@ def get_memory_collection():
 
 @lru_cache
 def get_embedding_model():
-    return model
+    return get_model()
