@@ -1,87 +1,88 @@
-import numpy as np
-
-def cosine_similarity(a, b):
-    return float(np.dot(a, b))
+import json
+from app.core.re_ranking import re_rank
+from app.core.session_store import SessionStore
+from app.core.user_profile_store import UserProfileStore
 
 class ContextBuilder:
-    def __init__(self, max_tokens=3000, recent_limit=10, dedupe_threshold=0.88):
-        self.max_tokens = max_tokens
-        self.recent_limit = recent_limit
-        self.dedupe_threshold = dedupe_threshold
 
-    # Build context from various sources
-    def build(self, query, session_messages, memories, user_profile=None):
-        context = []
+    def __init__(self, memory_engine, max_context_tokens=1800):
+        self.memory_engine = memory_engine
+        self.session_store = SessionStore()
+        self.profile_store = UserProfileStore()
+        self.max_context_tokens = max_context_tokens
 
-        # 1. Add profile
-        if user_profile:
-            context.append({
-                "source": "profile",
-                "text": user_profile,
-                "metadata": {"memory_type": "profile", "importance": 1.0}
-            })
+    # ---------------------------------------------------------
+    # Build context for LLM (main function)
+    # ---------------------------------------------------------
+    def build_context(self, user_id: str, session_id: str, query: str):
+        context_blocks = []
 
-        # 2. Add long-term memories
-        for mem in memories:
-            context.append({
-                "source": "memory",
-                "text": mem["text"],
-                "metadata": mem["metadata"],
-                "distance": mem["distance"],
-                "vector": mem.get("vector")
-            })
+        # 1. Load user profile
+        profile = self.profile_store.load_profile(user_id)
+        if profile:
+            context_blocks.append(self.format_profile(profile))
 
-        # 3. Add recent session messages
-        recent = session_messages[-self.recent_limit:]
-        for msg in recent:
-            context.append({
-                "source": msg["role"],
-                "text": msg["text"],
-                "metadata": {"memory_type": "session"}
-            })
+        # 2. Retrieve long-term memories
+        memories = self.memory_engine.search_memory(user_id, query, k=20)
+        ranked = re_rank(memories)
 
-        # 4. DEDUPE
-        context = self.dedupe(context)
+        # 3. Select only best-scored memories
+        selected_mems = self.select_memories(ranked)
 
-        # 5. TRIM
-        context = self.trim(context)
+        if selected_mems:
+            context_blocks.append(self.format_memories(selected_mems))
 
-        return {
-            "context_items": context
-        }    
+        # 4. Load conversation history
+        history = self.session_store.load(user_id, session_id, limit=8)
+        if history:
+            context_blocks.append(self.format_history(history))
 
-    # Dedupe items based on vector similarity
-    def dedupe(self, items):
-        seen = []
-        out = []
+        # 5. Final query
+        context_blocks.append(f"USER QUERY:\n{query}")
 
-        for item in items:
-            v = item.get("vector")
-            if not v:
-                # If we don't have vector, skip semantic dedupe
-                out.append(item)
-                continue
+        return "\n\n---\n\n".join(context_blocks)
 
-            duplicate = False
-            for s in seen:
-                if cosine_similarity(np.array(v), np.array(s)) >= self.dedupe_threshold:
-                    duplicate = True
-                    break
-            
-            if not duplicate:
-                out.append(item)
-                seen.append(v)           
-        return out
-    
-    # Trim items to fit within max token limit
-    def trim(self, items):
-        total_chars = 0
-        out = []
-        limit_chars = self.max_tokens * 4  # approx conversion
+    # ---------------------------------------------------------
+    # Formatters
+    # ---------------------------------------------------------
+    def format_profile(self, profile):
+        clean = json.dumps(profile, indent=2)
+        return f"USER PROFILE:\n{clean}"
 
-        for item in items:
-            total_chars += len(item["text"])
-            if total_chars > limit_chars:
+    def format_memories(self, memories):
+        lines = []
+        for m in memories:
+            lines.append(f"- ({m['metadata'].get('memory_type')}) {m['text']}")
+        return "RELEVANT MEMORIES:\n" + "\n".join(lines)
+
+    def format_history(self, history):
+        chat_lines = []
+        for msg in history:
+            role = msg["role"].upper()
+            chat_lines.append(f"{role}: {msg['text']}")
+        return "RECENT CONVERSATION:\n" + "\n".join(chat_lines)
+
+    # ---------------------------------------------------------
+    # Memory selection with token budgeting
+    # ---------------------------------------------------------
+    def select_memories(self, ranked_memories):
+        """
+        Select memories based on ranking and token budget.
+        Personal info, goals, tasks get highest priority.
+        """
+
+        selected = []
+        used_tokens = 0
+        max_tokens = self.max_context_tokens
+
+        for mem in ranked_memories:
+            text = mem["text"]
+            token_estimate = len(text.split())
+
+            if used_tokens + token_estimate > max_tokens:
                 break
-            out.append(item)
-        return out    
+
+            selected.append(mem)
+            used_tokens += token_estimate
+
+        return selected
