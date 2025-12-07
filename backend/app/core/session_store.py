@@ -1,14 +1,22 @@
 import sqlite3
 import time
+from app.core.settings import settings
+import os
+
+DB_PATH = settings.SESSION_DB_PATH
+
+# Ensure folder exists
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 class SessionStore:
-    # Initialize the session store with the database path
-    def __init__(self, db_path="data/memory_store/memory_session.db"):
-        self.db_path = db_path
+
+    def __init__(self):
+        # Instance-level path
+        self.db_path = DB_PATH
         self._init_db()
-    # Initialize the database and create tables if they don't exist
+
     def _init_db(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
         cur = conn.cursor()
 
         cur.execute("""
@@ -25,9 +33,8 @@ class SessionStore:
         conn.commit()
         conn.close()
 
-    # Save a message to the database
     def save(self, user_id, session_id, role, text):
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
         cur = conn.cursor()
 
         cur.execute("""
@@ -37,10 +44,9 @@ class SessionStore:
 
         conn.commit()
         conn.close()
-    
-    # Load messages for a given user and session
+
     def load(self, user_id, session_id, limit=20):
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
         cur = conn.cursor()
 
         cur.execute("""
@@ -54,13 +60,7 @@ class SessionStore:
         rows = cur.fetchall()
         conn.close()
 
-        messages = []
-        for role, text, ts in rows:
-            messages.append({
-                "role": role,
-                "text": text,
-                "timestamp": ts
-            })
-
-        return messages
-    
+        return [
+            {"role": role, "text": text, "timestamp": ts}
+            for role, text, ts in rows
+        ]
