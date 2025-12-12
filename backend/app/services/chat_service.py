@@ -61,9 +61,6 @@ class ChatService:
     # ----------------------------------------------------
     async def stream_process(self, user_id: str, session_id: str, message: str):
 
-        # 1. Save user message
-        self.session_store.save(user_id, session_id, "user", message)
-
         # 2. Profile extraction
         self.profile_extractor.extract_and_update(user_id, message)
 
@@ -77,6 +74,9 @@ class ChatService:
             session_id=session_id,
             query=message
         )
+
+        # 1. Save user message
+        self.session_store.save(user_id, session_id, "user", message)
 
         # 5. Stream reply
         full_reply = ""

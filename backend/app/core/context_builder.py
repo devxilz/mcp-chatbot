@@ -5,7 +5,7 @@ from app.core.user_profile_store import UserProfileStore
 
 class ContextBuilder:
 
-    def __init__(self, memory_engine, max_context_tokens=1800):
+    def __init__(self, memory_engine, max_context_tokens=1000):
         self.memory_engine = memory_engine
         self.session_store = SessionStore()
         self.profile_store = UserProfileStore()
@@ -20,7 +20,13 @@ class ContextBuilder:
         # 1. Load user profile
         profile = self.profile_store.load_profile(user_id)
         if profile:
-            context_blocks.append(self.format_profile(profile))
+            context_blocks.append(f'''You are a concise, factual AI assistant. 
+            Always give short, meaningful answers. 
+            Do not ask unnecessary questions. 
+            Do not repeat information unless the user requests it. 
+            Do not create stories or add emotional filler. 
+            Maximum 2–3 sentences per answer unless the user explicitly asks for a long explanation.\n\n
+                                  {self.format_profile(profile)}''')
 
         # 2. Retrieve long-term memories
         memories = self.memory_engine.search_memory(user_id, query, k=20)
@@ -33,7 +39,7 @@ class ContextBuilder:
             context_blocks.append(self.format_memories(selected_mems))
 
         # 4. Load conversation history
-        history = self.session_store.load(user_id, session_id, limit=8)
+        history = self.session_store.load(user_id, session_id, limit=5)
         if history:
             context_blocks.append(self.format_history(history))
 
