@@ -11,7 +11,7 @@ memory_engine = MemoryEngine()
 # ------------------------------------------------------
 @router.get("/memory/{user_id}")
 def get_all_memories(user_id: str, limit: int = 100):
-    memories = memory_engine.recall(user_id, k=limit)
+    memories = memory_engine.recall(user_id, limit)
     return {"count": len(memories), "memories": memories}
 
 

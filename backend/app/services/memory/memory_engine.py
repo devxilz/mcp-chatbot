@@ -1,19 +1,20 @@
 import time
+import uuid
 from typing import List, Dict, Any, Optional
 
 from app.core.service_loader import get_embedding_model, get_memory_collection
-from app.utils.id_utils import generate_memory_id
 
 
 class MemoryEngine:
     """
-    Wrapper around Chroma collection + embedding model.
-
-    Responsibilities:
-    - Embed text
-    - Add memories with rich metadata (user_id, session_id, type, importance, created_at)
-    - Search memories for a user
-    - Update / delete / recall memories
+    Robust memory storage layer over ChromaDB.
+    Improvements:
+    - Strong unique IDs
+    - Reliable recall() with .get()
+    - Strict metadata normalization
+    - Created/updated timestamps
+    - Safer search result parsing
+    - Guaranteed return structure
     """
 
     def __init__(self) -> None:
@@ -25,11 +26,16 @@ class MemoryEngine:
     # ---------------------------------------------------------
     def embed(self, text: str) -> List[float]:
         vec = self.model.encode(text, convert_to_tensor=False)
-        # Some models return numpy arrays; normalize to plain list
         return vec.tolist() if hasattr(vec, "tolist") else vec
 
     # ---------------------------------------------------------
-    # Add a new memory
+    # Generate unique memory ID (no collisions)
+    # ---------------------------------------------------------
+    def _generate_id(self) -> str:
+        return str(uuid.uuid4())
+
+    # ---------------------------------------------------------
+    # Add memory
     # ---------------------------------------------------------
     def add_memory(
         self,
@@ -39,60 +45,42 @@ class MemoryEngine:
         memory_type: str = "fact",
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """
-        Stores a memory in Chroma with consistent metadata:
-        - user_id
-        - session_id
-        - memory_type
-        - importance
-        - created_at (unix timestamp)
-        """
+
+        mem_id = self._generate_id()
+        timestamp = time.time()
 
         base_meta: Dict[str, Any] = {
             "user_id": user_id,
             "session_id": session_id,
             "memory_type": memory_type,
-            "created_at": time.time(),
+            "importance": 0.4,     # default importance
+            "created_at": timestamp,
+            "updated_at": timestamp,
         }
 
-        # Merge caller metadata (e.g. importance) on top
         if metadata:
-            base_meta.update(metadata)
+            base_meta.update(metadata) # using if because update gives error if metadata is None
 
-        # Always ensure importance exists
-        if "importance" not in base_meta:
-            base_meta["importance"] = 0.4  # neutral default
-
-        mem_id = generate_memory_id(user_id, session_id, text)
         embedding = self.embed(text)
 
         self.collection.add(
             ids=[mem_id],
             documents=[text],
-            metadatas=[base_meta],
             embeddings=[embedding],
+            metadatas=[base_meta],
         )
 
         return mem_id
 
     # ---------------------------------------------------------
-    # Semantic search for a user's memories
+    # Semantic search
     # ---------------------------------------------------------
     def search_memory(
         self,
         user_id: str,
         query: str,
         k: int = 10,
-    ) -> list[Dict[str, Any]]:
-        """
-        Returns a list of:
-        {
-            "id": str,
-            "text": str,
-            "metadata": dict,
-            "distance": float
-        }
-        """
+    ) -> List[Dict[str, Any]]:
 
         qvec = self.embed(query)
 
@@ -108,59 +96,47 @@ class MemoryEngine:
         metas = (results.get("metadatas") or [[]])[0]
         dists = (results.get("distances") or [[]])[0]
 
-        out: list[Dict[str, Any]] = []
-        for mid, doc, meta, dist in zip(ids, docs, metas, dists):
-            if meta is None:
-                meta = {}
-            out.append(
-                {
-                    "id": mid,
-                    "text": doc,
-                    "metadata": meta,
-                    "distance": float(dist),
-                }
-            )
+        output = []
+        for mid, doc, meta, dist in zip(ids, docs, metas, dists): #zip iterates over multiple lists in parallel
+            output.append({
+                "id": mid,
+                "text": doc,
+                "metadata": meta or {},
+                "distance": float(dist),
+            })
 
-        return out
+        return output
 
     # ---------------------------------------------------------
-    # Get all memories for a user (for debugging / tools)
+    # Recall all memories for a user (no vector search)
     # ---------------------------------------------------------
-    def recall(self, user_id: str, k: int = 100) -> list[Dict[str, Any]]:
+    def recall(self, user_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         """
-        Recall up to k memories for a user without a specific query.
-        Useful for debugging or inspection.
+        Uses .get() instead of .query() = correct & reliable.
         """
 
-        results = self.collection.query(
-            query_texts=["*"],
-            n_results=k,
+        results = self.collection.get(
             where={"user_id": user_id},
-            include=["documents", "metadatas", "distances"],
+            limit=limit,
+            include=["documents", "metadatas"],
         )
 
-        ids = (results.get("ids") or [[]])[0]
-        docs = (results.get("documents") or [[]])[0]
-        metas = (results.get("metadatas") or [[]])[0]
-        dists = (results.get("distances") or [[]])[0]
+        ids = results.get("ids") or []
+        docs = results.get("documents") or []
+        metas = results.get("metadatas") or []
 
-        out: list[Dict[str, Any]] = []
-        for mid, doc, meta, dist in zip(ids, docs, metas, dists):
-            if meta is None:
-                meta = {}
-            out.append(
-                {
-                    "id": mid,
-                    "text": doc,
-                    "metadata": meta,
-                    "distance": float(dist),
-                }
-            )
+        output = []
+        for mid, doc, meta in zip(ids, docs, metas):
+            output.append({
+                "id": mid,
+                "text": doc,
+                "metadata": meta or {},
+            })
 
-        return out
+        return output
 
     # ---------------------------------------------------------
-    # Update an existing memory's text/metadata
+    # Update memory (text or metadata)
     # ---------------------------------------------------------
     def update_memory(
         self,
@@ -168,39 +144,34 @@ class MemoryEngine:
         new_text: Optional[str] = None,
         new_metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """
-        Overwrites the document and/or metadata for a memory.
-        """
 
-        # Fetch existing to merge metadata
         existing = self.collection.get(ids=[memory_id])
-
         if not existing.get("ids"):
             return
 
         old_doc = existing["documents"][0]
         old_meta = existing["metadatas"][0] or {}
 
-        doc = new_text if new_text is not None else old_doc
+        updated_doc = new_text if new_text is not None else old_doc
 
-        meta = dict(old_meta)
+        updated_meta = dict(old_meta)
         if new_metadata:
-            meta.update(new_metadata)
+            updated_meta.update(new_metadata)
 
-        # Ensure we don't lose required keys
-        if "created_at" not in meta:
-            meta["created_at"] = time.time()
-        if "importance" not in meta:
-            meta["importance"] = 0.4
+        # preserve created_at
+        if "created_at" not in updated_meta:
+            updated_meta["created_at"] = old_meta.get("created_at", time.time())
+
+        updated_meta["updated_at"] = time.time()  # new field
 
         self.collection.update(
             ids=[memory_id],
-            documents=[doc],
-            metadatas=[meta],
+            documents=[updated_doc],
+            metadatas=[updated_meta],
         )
 
     # ---------------------------------------------------------
-    # Delete a memory by id
+    # Delete memory
     # ---------------------------------------------------------
     def delete_memory(self, memory_id: str) -> None:
         self.collection.delete(ids=[memory_id])

@@ -53,7 +53,7 @@ class SessionStore:
             SELECT role, text, timestamp
             FROM session_messages
             WHERE user_id = ? AND session_id = ?
-            ORDER BY timestamp ASC
+            ORDER BY timestamp DESC
             LIMIT ?
         """, (user_id, session_id, limit))
 
